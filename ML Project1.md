@@ -1,0 +1,179 @@
+---
+title: "Machine Learning - Predicting Exercise"
+output: html_document
+---
+
+```r
+library(caret)
+library(pROC)
+library(randomForest)
+set.seed(12345)
+```
+#Executive Summary
+
+The project is about using the data from health bands to predict the manner in which participants did the exercise.Data was collected by having participants perform barbell lifts correctly and incorrectly in 5 different ways.
+
+The resultant data was cleansed and transformed to be fed into the prediction algorithms.Random Forest method was used. It returned a 97% accurate model. This was applied to the test data provided and it predicted 18 out of 20 (90%) accurately.
+
+#Description of Data
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this report, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (refer the section on the Weight Lifting Exercise Dataset).
+
+#Data Loading & Cleansing
+
+First the two data sets are loaded. The approach will be to use "pml-training.csv" data as the master data. This will be cleansed, partitioned into training and testing data. Prediction function will be generated on the training data, then tested with the testing data. This will be applied to the validation data (pml-testing.csv).
+
+```r
+#load data
+df_orig <- read.csv("./pml-training.csv")
+df_main <- df_orig
+df_validate <- read.csv("./pml-testing.csv")
+as.numeric.factor <- function(x) {as.numeric(levels(x))[x]}
+```
+
+The following are the cleansing activities carried out
+
+-Drop rows where new_window = yes, as this seems like a summarization one
+
+-Drop all columns that are NA
+
+-Drop the first six columns which include the name, X, timestamps etc
+
+-Some columns are factors that need to be converted to numeric
+
+-Post conversion to numeric, drop all columns that are NA
+
+A function is created for this. 
+
+```r
+cleanse <- function (df) {
+  #drop new_window = yes, as this seems like a summarization one
+  df <- df[df$new_window == "no",]
+  
+  #drop all columns that are NA
+  to_drop <- apply( df, 2 , function(x) all(is.na(x))) 
+  df <- df[,!to_drop]
+  
+  #drop some other colums like name, X, timestamps etc
+  to_drop1 <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+  df <- subset(df, select = !(colnames(df) %in% to_drop1))
+  
+  #some columns are factors that need to be converted to numeric
+  factorcol <- sapply(df, function(x) is.factor(x))
+  factorcol["classe"] <- FALSE
+  df1 <- df[,factorcol]
+    
+  la <- lapply(df1, function(x) as.numeric.factor(x))
+  df2 <- data.frame(la)
+  
+  df <- df[,!factorcol]
+  df <- cbind(df, df2)
+  
+  #drop all columns that are NA
+  to_drop <- apply( df, 2 , function(x) all(is.na(x))) 
+  df <- df[,!to_drop]
+  df  
+}
+
+df_main <- cleanse(df_main)
+```
+
+Post the cleansing, check for variables with near zero variances, that can be dropped. 
+
+```r
+#check for Zero Variance columns
+nearZeroVar(df_main) 
+```
+
+```
+## integer(0)
+```
+
+#Data Partition & PCA
+The cleansed data is split into training and testing database at 70:30 ratio.
+
+```r
+#split the data into training and testing
+inTrain = createDataPartition(df_main$classe, p = 0.7, list=FALSE)
+training <- df_main[inTrain,]
+testing <- df_main[-inTrain,]
+```
+
+Next PCA is done to build a weighted combination of predictors. 
+
+```r
+#pca compression
+n <- length(df_main)
+preProc <- preProcess(training[,-n], method = "pca")
+trainPC <- predict(preProc, training[,-n])
+trainPC$classe <- training$classe
+testPC <- predict(preProc, testing[,-n])
+testPC$classe <- testing$classe
+```
+
+#Build Predicition Model Based on Random Forests Algorithm
+
+The overall accuracy of this model is at 97%.
+
+
+```r
+fit <- randomForest(classe ~ ., data=trainPC)
+predrf <- predict(fit, testPC)
+confusionMatrix(testing$classe, predrf)
+```
+
+```
+## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1629    5    6    0    1
+##          B   29 1061   24    0    1
+##          C    4   13  969   13    6
+##          D    1    0   41  900    2
+##          E    0    8    8    7 1035
+## 
+## Overall Statistics
+##                                         
+##                Accuracy : 0.971         
+##                  95% CI : (0.966, 0.975)
+##     No Information Rate : 0.289         
+##     P-Value [Acc > NIR] : <2e-16        
+##                                         
+##                   Kappa : 0.963         
+##  Mcnemar's Test P-Value : NA            
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity             0.980    0.976    0.925    0.978    0.990
+## Specificity             0.997    0.988    0.992    0.991    0.995
+## Pos Pred Value          0.993    0.952    0.964    0.953    0.978
+## Neg Pred Value          0.992    0.994    0.983    0.996    0.998
+## Prevalence              0.289    0.189    0.182    0.160    0.181
+## Detection Rate          0.283    0.184    0.168    0.156    0.180
+## Detection Prevalence    0.285    0.193    0.174    0.164    0.184
+## Balanced Accuracy       0.988    0.982    0.958    0.985    0.993
+```
+
+#Conclusion
+
+Now using the model, make the predictions for the validation data (pml-testing.csv)
+
+```r
+#Do the model for Validate
+df_validate$classe <- c(rep("P",20))
+df_validate <- subset(df_validate, select = (colnames(df_validate) %in% colnames(df_main)))
+validatePC <- predict(preProc, df_validate[,-length(df_validate)])
+validatePC$classe <- df_validate$classe
+predvalidate <- predict(fit, validatePC)
+predvalidate
+```
+
+```
+##  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 
+##  B  A  A  A  A  E  D  B  A  A  A  C  B  A  E  E  A  B  B  B 
+## Levels: A B C D E
+```
